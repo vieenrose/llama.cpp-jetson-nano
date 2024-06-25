@@ -1,3 +1,9 @@
+LLAMA_NO_CCACHE = 1
+LLAMA_CUDA = 1 # Built with cuBLAS support
+CUDA_DOCKER_ARCH = sm_53 # Jetson Nano
+LLAMA_CUDA_NVCC = /usr/local/cuda-10.2/bin/nvcc
+CUDA_PATH=/usr/local/cuda-10.2
+
 # Define the default target now so that it is always the first target
 BUILD_TARGETS = \
 	libllava.a \
@@ -69,22 +75,11 @@ UNAME_S := $(shell uname -s)
 endif
 
 ifndef UNAME_P
-UNAME_P := $(shell uname -p)
+UNAME_P := aarch64
 endif
 
 ifndef UNAME_M
-UNAME_M := $(shell uname -m)
-endif
-
-# In GNU make default CXX is g++ instead of c++.  Let's fix that so that users
-# of non-gcc compilers don't have to provide g++ alias or wrapper.
-DEFCC  := cc
-DEFCXX := c++
-ifeq ($(origin CC),default)
-CC  := $(DEFCC)
-endif
-ifeq ($(origin CXX),default)
-CXX := $(DEFCXX)
+UNAME_M := aarch64
 endif
 
 # Mac OS + Arm can report x86_64
@@ -380,16 +375,12 @@ ifneq ($(filter aarch64%,$(UNAME_M)),)
 	# Apple M1, M2, etc.
 	# Raspberry Pi 3, 4, Zero 2 (64-bit)
 	# Nvidia Jetson
-	MK_CFLAGS   += -mcpu=native
-	MK_CXXFLAGS += -mcpu=native
-	JETSON_RELEASE_INFO = $(shell jetson_release)
-	ifdef JETSON_RELEASE_INFO
-		ifneq ($(filter TX2%,$(JETSON_RELEASE_INFO)),)
-			JETSON_EOL_MODULE_DETECT = 1
-			CC = aarch64-unknown-linux-gnu-gcc
-			cxx = aarch64-unknown-linux-gnu-g++
-		endif
-	endif
+	MK_CFLAGS   += -mcpu=cortex-a57 # Jetson Nano
+	MK_CXXFLAGS += -mcpu=cortex-a57
+	JETSON_EOL_MODULE_DETECT = 1
+	CROSS_COMPILE_V8 := $(ROOTDIR)/toolchain/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu/bin/aarch64-linux-gnu-
+	CC := $(CROSS_COMPILE_V8)gcc 
+	CXX := $(CROSS_COMPILE_V8)g++
 endif
 
 ifneq ($(filter armv6%,$(UNAME_M)),)
@@ -504,7 +495,7 @@ ifdef LLAMA_CUDA
 		CUDA_PATH ?= /usr/local/cuda
 	endif
 	MK_CPPFLAGS  += -DGGML_USE_CUDA -I$(CUDA_PATH)/include -I$(CUDA_PATH)/targets/$(UNAME_M)-linux/include -DGGML_CUDA_USE_GRAPHS
-	MK_LDFLAGS   += -lcuda -lcublas -lculibos -lcudart -lcublasLt -lpthread -ldl -lrt -L$(CUDA_PATH)/lib64 -L/usr/lib64 -L$(CUDA_PATH)/targets/$(UNAME_M)-linux/lib -L$(CUDA_PATH)/lib64/stubs -L/usr/lib/wsl/lib
+	MK_LDFLAGS   += -lcuda -lcublas -lculibos -lcudart -lcublasLt -lpthread -ldl -lrt -L$(CUDA_PATH)/lib64 -L/usr/lib64 -L$(CUDA_PATH)/targets/$(UNAME_M)-linux/lib -L$(CUDA_PATH)/lib64/stubs -L/usr/lib/wsl/lib -L$(CUDA_PATH)/targets/$(UNAME_M)-linux/lib/stubs
 	OBJS         += ggml-cuda.o
 	OBJS         += $(patsubst %.cu,%.o,$(wildcard ggml-cuda/*.cu))
 	OBJS         += $(OBJS_CUDA_TEMP_INST)
@@ -580,7 +571,7 @@ endif # LLAMA_CUDA_FA_ALL_QUANTS
 
 ifdef JETSON_EOL_MODULE_DETECT
 define NVCC_COMPILE
-	$(NVCC) -I. -Icommon -D_XOPEN_SOURCE=600 -D_GNU_SOURCE -DNDEBUG -DGGML_USE_CUDA -I/usr/local/cuda/include -I/opt/cuda/include -I/usr/local/cuda/targets/aarch64-linux/include -std=c++11 -O3 $(NVCCFLAGS) $(CPPFLAGS) -Xcompiler "$(CUDA_CXXFLAGS)" -c $< -o $@
+	$(NVCC) -I. -Icommon -D_XOPEN_SOURCE=600 -D_GNU_SOURCE -DNDEBUG -DGGML_USE_CUDA -I$(CUDA_PATH)/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/aarch64-linux/include -std=c++11 $(NVCCFLAGS) --compiler-bindir $(CXX) $(CPPFLAGS) -Xcompiler "$(CUDA_CXXFLAGS)" -c $< -o $@
 endef # NVCC_COMPILE
 else
 define NVCC_COMPILE
@@ -734,6 +725,7 @@ ifdef LLAMA_CUDA
 GF_CC := $(NVCC) $(NVCCFLAGS) 2>/dev/null .c -Xcompiler
 include scripts/get-flags.mk
 CUDA_CXXFLAGS := $(BASE_CXXFLAGS) $(GF_CXXFLAGS) -Wno-pedantic
+CUDA_CXXFLAGS := $(shell echo "$(CUDA_CXXFLAGS)" | sed 's/-mcpu=cortex-a57//') # Remove -mcpu=cortex-a57 from CUDA_CXXFLAGS which is invalid
 endif
 
 ifdef LLAMA_CURL
